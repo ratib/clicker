@@ -1,5 +1,5 @@
-# clicker/ui/main.py
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import sys
 import time
 import platform as pf
@@ -13,8 +13,6 @@ from PySide6.QtGui import QCursor, QFont
 
 from clicker.core.scheduler import ClickScheduler
 from clicker.core.logger import Logger
-
-# Let Qt handle DPI awareness (DO NOT force it manually)
 
 if pf.system() == "Windows":
     from clicker.backends.windows import WindowsBackend
@@ -35,7 +33,6 @@ class CaptureOverlay(QWidget):
             Qt.FramelessWindowHint |
             Qt.WindowStaysOnTopHint
         )
-
         self.setWindowOpacity(0.01)
         self.setCursor(Qt.CrossCursor)
 
@@ -47,12 +44,8 @@ class CaptureOverlay(QWidget):
         self.activateWindow()
         self.grabMouse()
 
-        print("Overlay shown and mouse grabbed")
-
     def mousePressEvent(self, event):
         pos = QCursor.pos()
-        print("Overlay click captured:", pos.x(), pos.y())
-
         self.releaseMouse()
         self.callback(pos.x(), pos.y())
         self.close()
@@ -67,6 +60,11 @@ class MainWindow(QWidget):
         self.x = None
         self.y = None
 
+        # ---- Timezone state ----
+        self.use_mecca_time = False
+        self.tz_local = datetime.now().astimezone().tzinfo
+        self.tz_mecca = ZoneInfo("Asia/Riyadh")
+
         self.setWindowTitle("Precise Clicker")
         self.setFixedWidth(250)
 
@@ -77,6 +75,16 @@ class MainWindow(QWidget):
         self.current_time_label.setFont(big)
         self.current_time_label.setAlignment(Qt.AlignCenter)
 
+        self.tz_label = QLabel("Local System Time")
+        self.tz_label.setAlignment(Qt.AlignCenter)
+        self.tz_label.setStyleSheet("font-size: 11px; color: gray;")
+
+        self.tz_toggle = QLabel("<a href='#'>Change Time Zone</a>")
+        self.tz_toggle.setAlignment(Qt.AlignCenter)
+        self.tz_toggle.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.tz_toggle.setOpenExternalLinks(False)
+        self.tz_toggle.linkActivated.connect(self.toggle_timezone)
+
         self.time_edit = QTimeEdit()
         self.time_edit.setDisplayFormat("HH:mm:ss.zzz")
         self.time_edit.setTime(QTime.currentTime())
@@ -86,6 +94,7 @@ class MainWindow(QWidget):
 
         self.capture_btn = QPushButton("Capture Click Position")
         self.capture_btn.setStyleSheet("font-weight: bold; padding: 8px;")
+
         self.pos_label = QLabel("X: -, Y: -")
         self.pos_label.setAlignment(Qt.AlignCenter)
 
@@ -96,6 +105,7 @@ class MainWindow(QWidget):
 
         self.arm_btn = QPushButton("START CLICKER")
         self.arm_btn.setStyleSheet("font-weight: bold; padding: 8px;")
+
         self.cancel_btn = QPushButton("CANCEL")
         self.cancel_btn.setStyleSheet("font-weight: bold; padding: 6px;")
 
@@ -105,13 +115,14 @@ class MainWindow(QWidget):
         self.log_view.setStyleSheet("font-size: 10px; color: #444;")
 
         self.footer = QLabel("developer: ratib1988@gmail.com")
-        self.footer.setAlignment(Qt.AlignCenter)        
+        self.footer.setAlignment(Qt.AlignCenter)
         self.footer.setStyleSheet("font-size: 9px; color: gray;")
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Current System Time", alignment=Qt.AlignCenter))
         layout.addWidget(self.current_time_label)
-        layout.addSpacing(15)
+        layout.addWidget(self.tz_label)
+        layout.addWidget(self.tz_toggle)
+        layout.addSpacing(10)
 
         layout.addWidget(self.capture_btn)
         layout.addWidget(self.pos_label)
@@ -119,16 +130,15 @@ class MainWindow(QWidget):
 
         layout.addWidget(QLabel("Target Click Time", alignment=Qt.AlignCenter))
         layout.addWidget(self.time_edit)
-        layout.addSpacing(15)
+        layout.addSpacing(10)
 
         layout.addWidget(self.arm_btn)
         layout.addSpacing(10)
 
         layout.addWidget(QLabel("Time Remaining", alignment=Qt.AlignCenter))
         layout.addWidget(self.countdown)
-        layout.addSpacing(15)
+        layout.addSpacing(10)
 
-        
         layout.addWidget(self.cancel_btn)
 
         sep = QFrame()
@@ -146,6 +156,15 @@ class MainWindow(QWidget):
         self.timer.timeout.connect(self.update_countdown)
         self.timer.start(50)
 
+    def toggle_timezone(self):
+        self.use_mecca_time = not self.use_mecca_time
+        if self.use_mecca_time:
+            self.tz_label.setText("Mecca Time (Asia/Riyadh)")
+            self.log_view.append(self.logger.log("Timezone set to Mecca"))
+        else:
+            self.tz_label.setText("Local System Time")
+            self.log_view.append(self.logger.log("Timezone set to Local"))
+
     def start_capture(self):
         self._overlay = CaptureOverlay(self.on_captured)
 
@@ -162,7 +181,8 @@ class MainWindow(QWidget):
         if self.scheduler:
             self.scheduler.cancel()
 
-        now = datetime.now()
+        tz = self.tz_mecca if self.use_mecca_time else self.tz_local
+        now = datetime.now(tz)
         t = self.time_edit.time()
 
         target = now.replace(
@@ -175,14 +195,18 @@ class MainWindow(QWidget):
         if (now - target).total_seconds() > 2:
             target += timedelta(days=1)
 
+        # Convert to UTC timestamp for scheduler
+        target_ts = target.astimezone(ZoneInfo("UTC")).timestamp()
+
         self.scheduler = ClickScheduler(
-            target.timestamp(),
+            target_ts,
             self._schedule_click
         )
         self.scheduler.start()
+
         self.log_view.append(
             self.logger.log(
-                f"Clicker Started for {target.strftime('%H:%M:%S.%f')[:-3]}"
+                f"Clicker armed for {target.strftime('%H:%M:%S.%f')[:-3]} ({tz})"
             )
         )
 
@@ -204,7 +228,9 @@ class MainWindow(QWidget):
             self.log_view.append(self.logger.log("Clicker canceled"))
 
     def update_countdown(self):
-        self.current_time_label.setText(QTime.currentTime().toString("HH:mm:ss"))
+        tz = self.tz_mecca if self.use_mecca_time else self.tz_local
+        now = datetime.now(tz)
+        self.current_time_label.setText(now.strftime("%H:%M:%S"))
 
         if not self.scheduler:
             return
