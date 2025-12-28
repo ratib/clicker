@@ -35,3 +35,5 @@ secrets.json
 .pytest_cache/
 .coverage
 htmlcov/
+
+*.spec

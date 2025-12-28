@@ -1,27 +1,29 @@
 # clicker/ui/main.py
 from datetime import datetime, timedelta
-
 import sys
 import time
 import platform as pf
+
 from PySide6.QtWidgets import (
     QApplication, QWidget, QPushButton, QLabel,
     QVBoxLayout, QTextEdit, QTimeEdit, QFrame
 )
-from PySide6.QtCore import Qt, QTime, QTimer
+from PySide6.QtCore import Qt, QTime, QTimer, QMetaObject, Slot
 from PySide6.QtGui import QCursor, QFont
+
 from clicker.core.scheduler import ClickScheduler
 from clicker.core.logger import Logger
 
+# Let Qt handle DPI awareness (DO NOT force it manually)
+
 if pf.system() == "Windows":
-    from clicker.platform.windows import WindowsBackend
+    from clicker.backends.windows import WindowsBackend
     backend = WindowsBackend()
 elif pf.system() == "Darwin":
-    from clicker.platform.macos import MacOSBackend
+    from clicker.backends.macos import MacOSBackend
     backend = MacOSBackend()
 else:
-    from clicker.platform.linux_wayland import LinuxWaylandBackend
-    backend = LinuxWaylandBackend()
+    raise RuntimeError("Only Windows and macOS supported")
 
 
 class CaptureOverlay(QWidget):
@@ -34,9 +36,7 @@ class CaptureOverlay(QWidget):
             Qt.WindowStaysOnTopHint
         )
 
-        # IMPORTANT: do NOT rely on transparency for input
         self.setWindowOpacity(0.01)
-
         self.setCursor(Qt.CrossCursor)
 
         screen = QApplication.primaryScreen()
@@ -45,8 +45,6 @@ class CaptureOverlay(QWidget):
         self.show()
         self.raise_()
         self.activateWindow()
-
-        # 🔑 THIS IS THE KEY LINE
         self.grabMouse()
 
         print("Overlay shown and mouse grabbed")
@@ -60,20 +58,9 @@ class CaptureOverlay(QWidget):
         self.close()
 
 
-
-
-
-
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        big_time_font = QFont("Consolas")
-        big_time_font.setPointSize(28)
-        big_time_font.setBold(True)
-
-        medium_time_font = QFont("Consolas")
-        medium_time_font.setPointSize(18)
-        medium_time_font.setBold(True)
 
         self.logger = Logger()
         self.scheduler = None
@@ -81,78 +68,46 @@ class MainWindow(QWidget):
         self.y = None
 
         self.setWindowTitle("Precise Clicker")
-        self.setFixedWidth(360)
+        self.setFixedWidth(250)
 
-        mono = QFont("Consolas")
-        mono.setPointSize(11)
+        big = QFont("Consolas", 28, QFont.Bold)
+        mid = QFont("Consolas", 18, QFont.Bold)
 
         self.current_time_label = QLabel("00:00:00")
-        self.current_time_label.setFont(big_time_font)
+        self.current_time_label.setFont(big)
         self.current_time_label.setAlignment(Qt.AlignCenter)
 
         self.time_edit = QTimeEdit()
         self.time_edit.setDisplayFormat("HH:mm:ss.zzz")
         self.time_edit.setTime(QTime.currentTime())
-        self.time_edit.setFont(medium_time_font)
-
-        # IMPORTANT: prevent invalid typing
+        self.time_edit.setFont(mid)
         self.time_edit.setKeyboardTracking(False)
-        self.time_edit.setWrapping(True)
-        self.time_edit.setButtonSymbols(QTimeEdit.UpDownArrows)
 
         self.capture_btn = QPushButton("Capture Click Position")
         self.pos_label = QLabel("X: -, Y: -")
 
         self.countdown = QLabel("00:00:00.000")
-        self.countdown.setFont(medium_time_font)
+        self.countdown.setFont(mid)
         self.countdown.setAlignment(Qt.AlignCenter)
-        self.countdown.setStyleSheet("color: #d32f2f;")  # red for urgency
 
         self.arm_btn = QPushButton("ARM CLICK")
-        self.arm_btn.setStyleSheet("font-weight: bold; padding: 8px;")
         self.cancel_btn = QPushButton("CANCEL")
-        self.cancel_btn.setStyleSheet("padding: 6px;")
 
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setFixedHeight(150)
-        self.log_view.setStyleSheet("font-size: 10px; color: #444;")
 
-        self.footer = QLabel("developer: ratib1988@gmail.com")
-        self.footer.setAlignment(Qt.AlignCenter)        
-        self.footer.setStyleSheet("font-size: 9px; color: gray;")
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Current System Time", alignment=Qt.AlignCenter))
+        layout = QVBoxLayout(self)
         layout.addWidget(self.current_time_label)
-        layout.addSpacing(15)
-
-        layout.addWidget(QLabel("Target Click Time", alignment=Qt.AlignCenter))
         layout.addWidget(self.time_edit)
-        layout.addSpacing(15)
-
         layout.addWidget(self.capture_btn)
         layout.addWidget(self.pos_label)
-        layout.addSpacing(10)
-
-        layout.addWidget(QLabel("Time Remaining", alignment=Qt.AlignCenter))
         layout.addWidget(self.countdown)
-        layout.addSpacing(15)
-
-
         layout.addWidget(self.arm_btn)
         layout.addWidget(self.cancel_btn)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        layout.addWidget(sep)
-
         layout.addWidget(self.log_view)
-        layout.addWidget(self.footer)
-        self.setLayout(layout)
 
-        self.capture_btn.clicked.connect(self.start_capture
-        )
+        self.capture_btn.clicked.connect(self.start_capture)
         self.arm_btn.clicked.connect(self.arm)
         self.cancel_btn.clicked.connect(self.cancel)
 
@@ -161,24 +116,20 @@ class MainWindow(QWidget):
         self.timer.start(50)
 
     def start_capture(self):
-        print("start_capture() called")
         self._overlay = CaptureOverlay(self.on_captured)
-
-
-
 
     def on_captured(self, x, y):
         self.x, self.y = x, y
         self.pos_label.setText(f"X: {x}, Y: {y}")
-        self.log_view.append(self.logger.log(f"Position captured ({x},{y})"))
-        self._overlay = None
-
-
+        self.log_view.append(self.logger.log(f"Captured ({x},{y})"))
 
     def arm(self):
         if self.x is None or self.y is None:
-            self.log_view.append(self.logger.log("ERROR: Click position not set"))
+            self.log_view.append(self.logger.log("ERROR: position not set"))
             return
+
+        if self.scheduler:
+            self.scheduler.cancel()
 
         now = datetime.now()
         t = self.time_edit.time()
@@ -190,29 +141,33 @@ class MainWindow(QWidget):
             microsecond=t.msec() * 1000
         )
 
-        # If target already passed today, schedule for tomorrow
-        if target <= now:
+        if (now - target).total_seconds() > 2:
             target += timedelta(days=1)
 
-        self.scheduler = ClickScheduler(target.timestamp(), self.execute_click)
+        self.scheduler = ClickScheduler(
+            target.timestamp(),
+            self._schedule_click
+        )
         self.scheduler.start()
 
-        self.log_view.append(
-            self.logger.log(
-                f"Click armed for {target.strftime('%H:%M:%S.%f')[:-3]}"
-            )
+    def _schedule_click(self):
+        QMetaObject.invokeMethod(
+            self, "_execute_click_main", Qt.QueuedConnection
         )
 
+    @Slot()
+    def _execute_click_main(self):
+        backend.click(self.x, self.y)
+        self.log_view.append(self.logger.log("Click executed"))
+        self.scheduler = None
 
     def cancel(self):
         if self.scheduler:
             self.scheduler.cancel()
             self.scheduler = None
-            self.log_view.append(self.logger.log("Click canceled"))
 
     def update_countdown(self):
-        now_qt = QTime.currentTime()
-        self.current_time_label.setText(now_qt.toString("HH:mm:ss"))
+        self.current_time_label.setText(QTime.currentTime().toString("HH:mm:ss"))
 
         if not self.scheduler:
             return
@@ -221,18 +176,12 @@ class MainWindow(QWidget):
         if remaining < 0:
             remaining = 0
 
-        ms = int((remaining - int(remaining)) * 1000)
+        ms = int((remaining % 1) * 1000)
         s = int(remaining) % 60
         m = (int(remaining) // 60) % 60
         h = int(remaining) // 3600
 
         self.countdown.setText(f"{h:02}:{m:02}:{s:02}.{ms:03}")
-
-
-    def execute_click(self):
-        backend.click(self.x, self.y)
-        self.log_view.append(self.logger.log("Click executed"))
-        self.scheduler = None
 
 
 app = QApplication(sys.argv)
