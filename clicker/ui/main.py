@@ -89,23 +89,48 @@ class MainWindow(QWidget):
         self.countdown = QLabel("00:00:00.000")
         self.countdown.setFont(mid)
         self.countdown.setAlignment(Qt.AlignCenter)
+        self.countdown.setStyleSheet("color: #d32f2f;")
 
         self.arm_btn = QPushButton("ARM CLICK")
+        self.arm_btn.setStyleSheet("font-weight: bold; padding: 8px;")
         self.cancel_btn = QPushButton("CANCEL")
+        self.cancel_btn.setStyleSheet("padding: 6px;")
 
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setFixedHeight(150)
+        self.log_view.setStyleSheet("font-size: 10px; color: #444;")
+
+        self.footer = QLabel("developer: ratib1988@gmail.com")
+        self.footer.setAlignment(Qt.AlignCenter)        
+        self.footer.setStyleSheet("font-size: 9px; color: gray;")
 
         layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Current System Time", alignment=Qt.AlignCenter))
         layout.addWidget(self.current_time_label)
+        layout.addSpacing(15)
+
+        layout.addWidget(QLabel("Target Click Time", alignment=Qt.AlignCenter))
         layout.addWidget(self.time_edit)
+        layout.addSpacing(15)
+
         layout.addWidget(self.capture_btn)
         layout.addWidget(self.pos_label)
+        layout.addSpacing(10)
+
+        layout.addWidget(QLabel("Time Remaining", alignment=Qt.AlignCenter))
         layout.addWidget(self.countdown)
+        layout.addSpacing(15)
+
         layout.addWidget(self.arm_btn)
         layout.addWidget(self.cancel_btn)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        layout.addWidget(sep)
+
         layout.addWidget(self.log_view)
+        layout.addWidget(self.footer)
 
         self.capture_btn.clicked.connect(self.start_capture)
         self.arm_btn.clicked.connect(self.arm)
